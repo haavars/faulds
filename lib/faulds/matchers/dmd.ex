@@ -53,6 +53,17 @@ defmodule Faulds.Matchers.Dmd do
   @border 127.5
   @channels 12
   @batch 256
+  # Each byte of packed signs as its 8 values, ±1 as float32 (bit k is value k).
+  @signs List.to_tuple(
+           for byte <- 0..255,
+               do:
+                 for(
+                   k <- 0..7,
+                   into: <<>>,
+                   do:
+                     <<if(Bitwise.band(Bitwise.bsr(byte, k), 1) == 1, do: 1.0, else: -1.0)::float-32-native>>
+                 )
+         )
 
   @type template :: %{
           required(:minutiae) => Nx.Tensor.t() | nil,
@@ -177,7 +188,7 @@ defmodule Faulds.Matchers.Dmd do
     if count(probe) == 0 do
       List.duplicate(0.0, size)
     else
-      probe = pad(probe, bucket(count(probe)))
+      probe = probe |> pad(bucket(count(probe))) |> to_device()
 
       chunks
       |> Enum.flat_map(fn {indices, chunk} ->
@@ -229,14 +240,7 @@ defmodule Faulds.Matchers.Dmd do
           padded = Enum.map(part, fn {t, _} -> pad.(t, n2) end)
           padded = padded ++ List.duplicate(pad.(empty, n2), size - length(part))
 
-          stacked =
-            Map.new(keys, fn key ->
-              {key,
-               padded
-               |> Enum.map(&Map.fetch!(&1, key))
-               |> Nx.stack()
-               |> Nx.backend_transfer(Nx.default_backend())}
-            end)
+          stacked = Map.new(keys, &{&1, stack_host(Enum.map(padded, fn t -> t[&1] end))})
 
           {Enum.map(part, &elem(&1, 1)), stacked}
         end)
@@ -273,10 +277,22 @@ defmodule Faulds.Matchers.Dmd do
         empty()
 
       %{minutiae: minutiae, signs: signs, mask8: mask8} ->
+        n = Nx.axis_size(minutiae, 0)
+
         %{
           minutiae: minutiae,
-          feature: signs |> Nx.new_axis(0) |> unpack_signs_n() |> Nx.squeeze(axes: [0]),
-          mask: Nx.divide(mask8, 255.0)
+          feature:
+            host(
+              for(<<byte <- Nx.to_binary(signs)>>, into: <<>>, do: elem(@signs, byte)),
+              :f32,
+              {n, 768}
+            ),
+          mask:
+            host(
+              for(<<b <- Nx.to_binary(mask8)>>, into: <<>>, do: <<b / 255::float-32-native>>),
+              :f32,
+              {n, 64}
+            )
         }
     end
   end
@@ -289,9 +305,9 @@ defmodule Faulds.Matchers.Dmd do
     <<minutiae::binary-size(^a), signs::binary-size(^b), mask8::binary-size(^c)>> = rest
 
     %{
-      minutiae: minutiae |> Nx.from_binary(:f32) |> Nx.reshape({n, 3}),
-      signs: signs |> Nx.from_binary(:u8) |> Nx.reshape({n, 96}),
-      mask8: mask8 |> Nx.from_binary(:u8) |> Nx.reshape({n, 64})
+      minutiae: host(minutiae, :f32, {n, 3}),
+      signs: host(signs, :u8, {n, 96}),
+      mask8: host(mask8, :u8, {n, 64})
     }
   end
 
@@ -300,24 +316,24 @@ defmodule Faulds.Matchers.Dmd do
 
   defp pad_packed(%{minutiae: nil}, n) do
     %{
-      signs: Nx.broadcast(Nx.u8(0), {n, 96}),
-      mask8: Nx.broadcast(Nx.u8(0), {n, 64}),
-      minutiae: Nx.broadcast(0.0, {n, 3}),
-      valid: Nx.broadcast(Nx.u8(0), {n}),
-      weight: Nx.broadcast(0.0, {n}),
+      signs: zeros(:u8, {n, 96}),
+      mask8: zeros(:u8, {n, 64}),
+      minutiae: zeros(:f32, {n, 3}),
+      valid: zeros(:u8, {n}),
+      weight: zeros(:f32, {n}),
       ridges: unknown_ridges(n)
     }
   end
 
   defp pad_packed(t, n) do
-    rows = n - packed_count(t)
+    k = packed_count(t)
 
     %{
-      signs: Nx.pad(t.signs, Nx.u8(0), [{0, rows, 0}, {0, 0, 0}]),
-      mask8: Nx.pad(t.mask8, Nx.u8(0), [{0, rows, 0}, {0, 0, 0}]),
-      minutiae: Nx.pad(t.minutiae, 0.0, [{0, rows, 0}, {0, 0, 0}]),
-      valid: Nx.as_type(Nx.less(Nx.iota({n}), packed_count(t)), :u8),
-      weight: Nx.as_type(Nx.less(Nx.iota({n}), packed_count(t)), :f32),
+      signs: pad_rows(t.signs, n),
+      mask8: pad_rows(t.mask8, n),
+      minutiae: pad_rows(t.minutiae, n),
+      valid: flags(k, n, :u8),
+      weight: flags(k, n, :f32),
       ridges: unknown_ridges(n)
     }
   end
@@ -399,16 +415,34 @@ defmodule Faulds.Matchers.Dmd do
   end
 
   defn packed_chunk_scores_n(a, b, opts \\ []) do
-    b = %{
-      feature: unpack_signs_n(b.signs),
-      mask: Nx.as_type(b.mask8, :f32) / 255,
-      minutiae: b.minutiae,
-      valid: b.valid,
-      weight: b.weight,
-      ridges: b.ridges
-    }
+    s =
+      a.feature
+      |> packed_similarity_n(a.mask, b.signs, b.mask8, opts)
+      |> weigh_n(a.weight, b.weight)
 
-    chunk_scores_n(a, b, opts)
+    {i, j, active} = greedy_pairs(s, a.valid, b.valid)
+    relax_sides_n(s, a, b, i, j, active, opts)
+  end
+
+  # `similarity_n/4` (and the normalisation) against packed templates,
+  # whose features are ±1: `fb² = 1`, and the masks are the same for all
+  # 12 channels, so the two norms are sums over the 64 cells, not 768
+  # values; only `x12` needs the gallery's features.
+  defn packed_similarity_n(fa, ma, signs, mask8, opts \\ []) do
+    {n1, _} = Nx.shape(fa)
+    mb = Nx.as_type(mask8, :f32) / 255
+    fb = unpack_signs_n(signs) * Nx.tile(mb, [1, 1, @channels])
+    ma_fa2 = (Nx.tile(ma, [1, @channels]) * fa ** 2) |> Nx.reshape({n1, @channels, 64})
+
+    x1 = Nx.sqrt(Nx.dot(Nx.sum(ma_fa2, axes: [1]), [1], mb, [2]))
+    n12 = @channels * Nx.dot(ma, [1], mb, [2])
+    x12 = Nx.dot(Nx.tile(ma, [1, @channels]) * fa, [1], fb, [2])
+    s = x12 / Nx.max(x1 * Nx.sqrt(n12), 1.0e-3)
+    s |> normalise_packed(n12, opts) |> Nx.transpose(axes: [1, 0, 2])
+  end
+
+  deftransformp normalise_packed(s, n12, opts) do
+    if opts[:normalise], do: Nx.multiply(s, Nx.sqrt(Nx.divide(n12, 5))), else: s
   end
 
   # The relaxation, with ridge-count agreement when `opts[:ridges]`.
@@ -463,52 +497,97 @@ defmodule Faulds.Matchers.Dmd do
 
   defp pad(%{minutiae: nil}, n) do
     %{
-      feature: Nx.broadcast(0.0, {n, 768}),
-      mask: Nx.broadcast(0.0, {n, 64}),
-      minutiae: Nx.broadcast(0.0, {n, 3}),
-      valid: Nx.broadcast(Nx.u8(0), {n}),
-      weight: Nx.broadcast(0.0, {n}),
+      feature: zeros(:f32, {n, 768}),
+      mask: zeros(:f32, {n, 64}),
+      minutiae: zeros(:f32, {n, 3}),
+      valid: zeros(:u8, {n}),
+      weight: zeros(:f32, {n}),
       ridges: unknown_ridges(n)
-    }
-  end
-
-  defp pad(t, n) when n == elem(t.minutiae.shape, 0) do
-    %{
-      feature: t.feature,
-      mask: t.mask,
-      minutiae: t.minutiae,
-      valid: Nx.broadcast(Nx.u8(1), {n}),
-      weight: weight(t),
-      ridges: ridges(t, n)
     }
   end
 
   defp pad(t, n) do
     k = count(t)
-    rows = n - k
 
     %{
-      feature: Nx.pad(t.feature, 0.0, [{0, rows, 0}, {0, 0, 0}]),
-      mask: Nx.pad(t.mask, 0.0, [{0, rows, 0}, {0, 0, 0}]),
-      minutiae: Nx.pad(t.minutiae, 0.0, [{0, rows, 0}, {0, 0, 0}]),
-      valid: Nx.as_type(Nx.less(Nx.iota({n}), k), :u8),
-      weight: Nx.pad(weight(t), 0.0, [{0, rows, 0}]),
+      feature: pad_rows(t.feature, n),
+      mask: pad_rows(t.mask, n),
+      minutiae: pad_rows(t.minutiae, n),
+      valid: flags(k, n, :u8),
+      weight: weight(t, n),
       ridges: ridges(t, n)
     }
   end
 
-  defp weight(%{weight: %Nx.Tensor{} = w}), do: Nx.as_type(w, :f32)
-  defp weight(t), do: Nx.broadcast(1.0, {count(t)})
+  defp weight(%{weight: %Nx.Tensor{} = w}, n), do: w |> Nx.as_type(:f32) |> pad_rows(n)
+  defp weight(t, n), do: flags(count(t), n, :f32)
 
   # The template's ridge counts padded to `{n, n}` with unknowns (255).
   defp ridges(%{ridges: %Nx.Tensor{} = r}, n) do
-    rows = n - Nx.axis_size(r, 0)
-    r |> Nx.as_type(:u8) |> Nx.pad(Nx.u8(255), [{0, rows, 0}, {0, rows, 0}])
+    k = Nx.axis_size(r, 0)
+    fill = :binary.copy(<<255>>, n - k)
+
+    rows =
+      for <<row::binary-size(^k) <- Nx.to_binary(Nx.as_type(r, :u8))>>,
+        into: <<>>,
+        do: row <> fill
+
+    host(rows <> :binary.copy(<<255>>, (n - k) * n), :u8, {n, n})
   end
 
   defp ridges(_t, n), do: unknown_ridges(n)
 
-  defp unknown_ridges(n), do: Nx.broadcast(Nx.u8(255), {n, n})
+  defp unknown_ridges(n), do: host(:binary.copy(<<255>>, n * n), :u8, {n, n})
+
+  # Padding and stacking are done on the host, and each chunk's fields
+  # moved to the GPU once: an op on an EXLA tensor compiles a program for
+  # every new shape, about a quarter of a second for each minutia count
+  # not seen before, on the probe's side and the gallery's.
+  defp host(binary, type, shape),
+    do: binary |> Nx.from_binary(type, backend: Nx.BinaryBackend) |> Nx.reshape(shape)
+
+  defp zeros(type, shape),
+    do:
+      host(
+        :binary.copy(<<0>>, Tuple.product(shape) * div(elem(Nx.Type.normalize!(type), 1), 8)),
+        type,
+        shape
+      )
+
+  # `t` (`{k, ...}`) with zero rows to `n`.
+  defp pad_rows(t, n) do
+    shape = Nx.shape(t)
+    binary = Nx.to_binary(t)
+    row = div(byte_size(binary), elem(shape, 0))
+
+    host(
+      binary <> :binary.copy(<<0>>, (n - elem(shape, 0)) * row),
+      Nx.type(t),
+      put_elem(shape, 0, n)
+    )
+  end
+
+  # `{n}`: 1 for the first `k`, 0 after.
+  defp flags(k, n, :u8), do: host(:binary.copy(<<1>>, k) <> :binary.copy(<<0>>, n - k), :u8, {n})
+
+  defp flags(k, n, :f32),
+    do:
+      host(
+        :binary.copy(<<1.0::float-32-native>>, k) <> :binary.copy(<<0>>, 4 * (n - k)),
+        :f32,
+        {n}
+      )
+
+  defp stack_host([first | _] = tensors) do
+    tensors
+    |> Enum.map(&Nx.to_binary/1)
+    |> IO.iodata_to_binary()
+    |> host(Nx.type(first), Tuple.insert_at(Nx.shape(first), 0, length(tensors)))
+    |> Nx.backend_transfer(Nx.default_backend())
+  end
+
+  defp to_device(side),
+    do: Map.new(side, fn {k, t} -> {k, Nx.backend_transfer(t, Nx.default_backend())} end)
 
   # The best remaining pair, then its row and column are used up, every
   # batch row at once. `{i, j, active}`, each `{b, p}`, p = min(n1, n2).
@@ -522,8 +601,16 @@ defmodule Faulds.Matchers.Dmd do
     zeros = Nx.broadcast(Nx.s32(0), {b, p})
     active = Nx.broadcast(Nx.u8(0), {b, p})
 
-    {_, i, j, active, _} =
-      while {s0, i = zeros, j = zeros, active, k = 0}, k < p do
+    # No row has a valid cell left after min(probe's, largest template's)
+    # pairs, so the rest would stay inactive (as `zeros`) anyway.
+    steps =
+      Nx.min(
+        Nx.sum(Nx.as_type(valid1, :s32)),
+        Nx.reduce_max(Nx.sum(Nx.as_type(valid2, :s32), axes: [1]))
+      )
+
+    {_, i, j, active, _, _} =
+      while {s0, i = zeros, j = zeros, active, k = 0, steps}, k < steps do
         flat = Nx.reshape(s0, {b, n1 * n2})
         best = flat |> Nx.argmax(axis: 1) |> Nx.as_type(:s32)
         value = flat |> Nx.take_along_axis(Nx.new_axis(best, 1), axis: 1) |> Nx.squeeze(axes: [1])
@@ -541,7 +628,7 @@ defmodule Faulds.Matchers.Dmd do
         i = Nx.select(at, Nx.new_axis(bi, 1), i)
         j = Nx.select(at, Nx.new_axis(bj, 1), j)
         active = Nx.select(at, Nx.new_axis(ok, 1), active)
-        {Nx.select(used, neg, s0), i, j, active, k + 1}
+        {Nx.select(used, neg, s0), i, j, active, k + 1, steps}
       end
 
     {i, j, active}

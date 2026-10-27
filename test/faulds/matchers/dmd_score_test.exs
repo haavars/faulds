@@ -7,6 +7,15 @@ defmodule Faulds.Matchers.DmdScoreTest do
 
   alias Faulds.Matchers.Dmd
 
+  # The test's own tensors on the host: on EXLA every eager op (the
+  # random templates' many) compiles anew for each minutia count, 3–5 s
+  # each. Galleries stay within one 32-minutia bucket, so each scoring
+  # variant compiles once.
+  setup do
+    Nx.default_backend(Nx.BinaryBackend)
+    :ok
+  end
+
   defp template(n, seed) do
     key = Nx.Random.key(seed)
     {xy, key} = Nx.Random.uniform(key, 0.0, 300.0, shape: {n, 2})
@@ -50,7 +59,7 @@ defmodule Faulds.Matchers.DmdScoreTest do
 
   test "a mate scores far above unrelated prints, greedy and exact alike" do
     probe = template(18, 10)
-    gallery = [mate(probe, 25, 20), template(40, 30), template(6, 40)]
+    gallery = [mate(probe, 10, 20), template(30, 30), template(6, 40)]
 
     for assignment <- [:greedy, :hungarian] do
       [mated | others] = Dmd.score_many(probe, gallery, assignment: assignment)
@@ -78,7 +87,7 @@ defmodule Faulds.Matchers.DmdScoreTest do
 
   test "a packed gallery scores as its unpacked templates do" do
     probe = template(18, 10) |> Dmd.pack() |> Dmd.unpack()
-    gallery = [mate(template(18, 10), 25, 20), template(40, 30), nil, template(6, 40)]
+    gallery = [mate(template(18, 10), 10, 20), template(30, 30), nil, template(6, 40)]
     packed = Enum.map(gallery, &(&1 && Dmd.pack(&1)))
 
     unpacked =
@@ -99,7 +108,7 @@ defmodule Faulds.Matchers.DmdScoreTest do
 
   test "minutia weights of 1 change nothing; a uniform weight c scales the score by c" do
     probe = template(18, 10)
-    gallery = [mate(probe, 25, 20), template(40, 30)]
+    gallery = [mate(probe, 10, 20), template(30, 30)]
     ones = fn t -> Map.put(t, :weight, Nx.broadcast(1.0, {Nx.axis_size(t.minutiae, 0)})) end
     halves = Map.put(probe, :weight, Nx.broadcast(0.5, {18}))
 
@@ -130,7 +139,7 @@ defmodule Faulds.Matchers.DmdScoreTest do
     weighted =
       Map.put(probe, :weight, Nx.concatenate([Nx.broadcast(1.0, {12}), Nx.broadcast(0.1, {6})]))
 
-    gallery = [mate(true_part, 25, 52)] ++ for(s <- 60..69, do: template(40, s))
+    gallery = [mate(true_part, 10, 52)] ++ for(s <- 60..69, do: template(30, s))
 
     [mated | others] = Dmd.score_many(weighted, gallery)
     [plain_mated | plain_others] = Dmd.score_many(probe, gallery)
@@ -149,8 +158,8 @@ defmodule Faulds.Matchers.DmdScoreTest do
 
   test "ridge agreement: unknown counts change nothing; disagreeing counts cost a mate-like print" do
     probe = template(18, 10)
-    twin = mate(probe, 25, 20)
-    gallery = [twin, twin, template(40, 30)]
+    twin = mate(probe, 10, 20)
+    gallery = [twin, twin, template(30, 30)]
     plain = Dmd.score_many(probe, gallery)
 
     # No counts on either side: every factor is exactly 1.
@@ -162,8 +171,8 @@ defmodule Faulds.Matchers.DmdScoreTest do
     # Both copies have the probe's geometry and descriptors; only the
     # first has its ridge counts (its first 18 minutiae are the probe's).
     gallery = [
-      Map.put(twin, :ridges, Nx.put_slice(ridge_counts(43, 2), [0, 0], counts)),
-      Map.put(twin, :ridges, ridge_counts(43, 3)),
+      Map.put(twin, :ridges, Nx.put_slice(ridge_counts(28, 2), [0, 0], counts)),
+      Map.put(twin, :ridges, ridge_counts(28, 3)),
       List.last(gallery)
     ]
 
