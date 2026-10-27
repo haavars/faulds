@@ -1,0 +1,34 @@
+/_build/
+/cover/
+/deps/
+/doc/
+/.fetch
+erl_crash.dump
+*.ez
+/tmp/
+.DS_Store
+__pycache__/
+*.pyc
+
+# Data never goes in this repository: datasets, caches, templates and
+# score matrices live under data/ or a path given locally.
+/data/
+.cache/
+
+# Third-party models and tools, fetched or exported by the setup tasks
+# under their own terms (NOTICE.md).
+/priv/models/
+/priv/tools/
+/priv/**/.venv/
+/priv/**/src/
+/priv/**/model_weights/
+/priv/**/*.onnx
+/priv/**/*.onnx.data
+
+# Local configuration (paths to data and local tools).
+/config/local.exs
+/.env
+
+# Vendored Ortex: the native build and the ONNX Runtime libraries it copies
+/vendor/ortex/native/ortex/target/
+/vendor/ortex/priv/
