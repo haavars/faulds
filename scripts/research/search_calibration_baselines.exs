@@ -4,7 +4,10 @@
 # data/train). CPU only (EXLA host client). Run from the repo root:
 #
 #   mix run --no-start scripts/research/search_calibration_baselines.exs \
-#     --fit RUN,RUN,... --val RUN,RUN,... [--out OUT_DIR]
+#     --fit RUN,RUN,... --val RUN,RUN,... [--fusion MODEL] [--out OUT_DIR]
+#
+# MODEL is the fusion `mix faulds.latent_fusion` wrote (default
+# data/calibration/latent_fusion.json).
 #
 # Fit on the --fit runs; report on the --val runs pooled under one
 # threshold, each latent against its own run's rolled prints, every mated
@@ -22,10 +25,13 @@ alias Faulds.{
 {:ok, _} = Application.ensure_all_started(:exla)
 Nx.global_default_backend({EXLA.Backend, client: :host})
 
-{args, _} = OptionParser.parse!(System.argv(), strict: [fit: :string, val: :string, out: :string])
+{args, _} =
+  OptionParser.parse!(System.argv(),
+    strict: [fit: :string, val: :string, fusion: :string, out: :string]
+  )
 
 (args[:fit] && args[:val]) ||
-  raise "give the runs: --fit RUN,RUN,... --val RUN,RUN,... [--out DIR]"
+  raise "give the runs: --fit RUN,RUN,... --val RUN,RUN,... [--fusion MODEL] [--out DIR]"
 
 out_dir = args[:out] || "."
 File.mkdir_p!(out_dir)
@@ -70,7 +76,7 @@ for {run, s} <- sets do
   )
 end
 
-fusion = LearnedFusion.read!("priv/calibration/latent_fusion.json")
+fusion = LearnedFusion.read!(args[:fusion] || "data/calibration/latent_fusion.json")
 IO.puts("Fusion model: #{inspect(fusion.info)}")
 
 ldmd_all = Nx.concatenate(Enum.map(sets, fn {_, s} -> hd(s.matrices) end))

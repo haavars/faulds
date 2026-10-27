@@ -13,14 +13,14 @@ defmodule Mix.Tasks.Faulds.LatentFusion do
   its latents against its own people's rolled prints; `--runs a,b,…`
   keeps only those. The runs in `--val-runs a,b,…` (required) are held
   out, and the model fitted on the rest is reported on them and written
-  to `--out` (default `priv/calibration/latent_fusion.json`).
+  to `--out` (default `data/calibration/latent_fusion.json`).
   `--matchers` (default `ldmd,fdmd,mcc_leader,nbis,flare`) are
   `LatentBenchmark` methods; `--l2` the penalty (default 1.0).
 
   Then `Faulds.SearchCalibration` on the same training
   runs, for each score in `--calibrate` (default `ldmd,fused`: a matcher
   or the fused score), written to `--calibration-out` (default
-  `priv/calibration/latent_search_calibration.json`) and
+  `data/calibration/latent_search_calibration.json`) and
   reported as `<score>+cal`. `--k` (default 1) is the top candidates per
   search it is fitted on; `--covariates` a comma list of
   `SearchCalibration.covariate_names/0`, or `none`.
@@ -45,8 +45,8 @@ defmodule Mix.Tasks.Faulds.LatentFusion do
   alias Faulds.{LatentBenchmark, LearnedFusion, SearchCalibration, SearchMetrics}
   alias Faulds.Matchers.FlareNx
 
-  @default_out "priv/calibration/latent_fusion.json"
-  @default_calibration_out "priv/calibration/latent_search_calibration.json"
+  @default_out "data/calibration/latent_fusion.json"
+  @default_calibration_out "data/calibration/latent_search_calibration.json"
   @default_matchers "ldmd,fdmd,mcc_leader,nbis,flare"
 
   @impl Mix.Task

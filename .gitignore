@@ -10,9 +10,11 @@ erl_crash.dump
 __pycache__/
 *.pyc
 
-# Data never goes in this repository: datasets, caches, templates and
-# score matrices live under data/ or a path given locally.
+# Data never goes in this repository: datasets, caches, templates, score
+# matrices and the models fitted on them live under data/ or a path given
+# locally.
 /data/
+/priv/calibration/
 .cache/
 
 # Third-party models and tools, fetched or exported by the setup tasks

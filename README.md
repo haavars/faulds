@@ -72,7 +72,7 @@ any dataset can be converted to it. Put datasets under `data/`
 mix faulds.latent_benchmark data/benchmark --methods ldmd,fdmd,mcc_leader,nbis,flare
 
 # Fusion and search-level calibration: fit on training runs, report on
-# held-out validation runs
+# held-out validation runs; the models go to data/calibration/
 mix faulds.latent_fusion --train data/train --val-runs run-09,run-10
 
 # How well each extractor finds the true minutiae
@@ -80,7 +80,8 @@ mix faulds.latent_minutiae data/train/run-01 --extractors nbis,fdd,leader
 ```
 
 `mix help <task>` describes each task's options. Templates and score
-matrices are cached under each dataset's `.cache/`.
+matrices are cached under each dataset's `.cache/`. No fitted fusion or
+calibration models are distributed: fit them on your own training runs.
 
 ## Licence
 
