@@ -45,6 +45,8 @@ defmodule Faulds.Matchers.Dmd do
 
   import Nx.Defn
 
+  require Logger
+
   alias Faulds.Flare.Warp
   alias Faulds.Minutiae.Hungarian
   alias Faulds.Onnx
@@ -366,16 +368,26 @@ defmodule Faulds.Matchers.Dmd do
     if Keyword.get(opts, :assignment, :greedy) != :greedy,
       do: raise(ArgumentError, "a packed gallery is scored with greedy assignment only")
 
-    (&packed_chunk_scores_n(&1, &2, compiled_opts(opts)))
-    |> exla([Map.take(probe, @side_keys), Map.take(chunk, @packed_keys)])
+    copts = compiled_opts(opts)
+
+    :packed
+    |> kernel(&packed_chunk_scores_n(&1, &2, copts), copts, [
+      Map.take(probe, @side_keys),
+      Map.take(chunk, @packed_keys)
+    ])
     |> Nx.to_flat_list()
   end
 
   defp score_chunk(probe, chunk, opts) do
     case Keyword.get(opts, :assignment, :greedy) do
       :greedy ->
-        (&chunk_scores_n(&1, &2, compiled_opts(opts)))
-        |> exla([Map.take(probe, @side_keys), Map.take(chunk, @side_keys)])
+        copts = compiled_opts(opts)
+
+        :greedy
+        |> kernel(&chunk_scores_n(&1, &2, copts), copts, [
+          Map.take(probe, @side_keys),
+          Map.take(chunk, @side_keys)
+        ])
         |> Nx.to_flat_list()
 
       :hungarian ->
@@ -392,6 +404,60 @@ defmodule Faulds.Matchers.Dmd do
         (&relax_sides_n(&1, &2, &3, &4, &5, &6, compiled_opts(opts)))
         |> exla([s, Map.take(probe, @side_keys), Map.take(chunk, @side_keys), i, j, active])
         |> Nx.to_flat_list()
+    end
+  end
+
+  # A scoring kernel compiled once per VM for each shape and option set,
+  # and kept on disk across runs when `:faulds, :exla_cache` names a
+  # directory: compiling takes about 2 s a shape, so a first search of a
+  # 1,000-print gallery spent about 35 s on it. EXLA's own disk cache
+  # knows the shapes but not the function, so the file is named by
+  # everything the program depends on, this module's code included,
+  # encoded deterministically (a map's keys otherwise come in an order
+  # that differs from one VM to the next).
+  defp kernel(name, fun, copts, args) do
+    templates = Enum.map(args, &Nx.to_template/1)
+    key = {__MODULE__, name, copts, templates}
+
+    compiled =
+      with nil <- :persistent_term.get(key, nil) do
+        # One compile per key, so two searches never write one file.
+        :global.trans({key, self()}, fn ->
+          with nil <- :persistent_term.get(key, nil) do
+            compiled = compile_kernel(fun, templates, disk_cache(key))
+            :persistent_term.put(key, compiled)
+            compiled
+          end
+        end)
+      end
+
+    apply(compiled, args)
+  end
+
+  defp compile_kernel(fun, templates, []), do: Nx.Defn.compile(fun, templates, compiler: EXLA)
+
+  defp compile_kernel(fun, templates, [cache: path] = cache) do
+    Nx.Defn.compile(fun, templates, [compiler: EXLA] ++ cache)
+  rescue
+    # A file another EXLA or driver can't load: compiled again, anew.
+    error ->
+      Logger.warning("EXLA cache #{path} unusable (#{Exception.message(error)}); recompiling")
+      File.rm(path)
+      Nx.Defn.compile(fun, templates, [compiler: EXLA] ++ cache)
+  end
+
+  defp disk_cache(key) do
+    case Application.get_env(:faulds, :exla_cache) do
+      nil ->
+        []
+
+      dir ->
+        depends_on =
+          {key, Application.spec(:exla, :vsn), System.get_env("XLA_FLAGS"),
+           __MODULE__.module_info(:md5)}
+
+        hash = :crypto.hash(:sha256, :erlang.term_to_binary(depends_on, [:deterministic]))
+        [cache: Path.join(dir, "dmd-#{Base.url_encode64(hash, padding: false)}.exla")]
     end
   end
 

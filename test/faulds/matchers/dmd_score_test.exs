@@ -184,6 +184,28 @@ defmodule Faulds.Matchers.DmdScoreTest do
     assert disagreeing < 0.6 * hd(plain)
   end
 
+  @tag :tmp_dir
+  test "a kernel compiled once is kept on disk and loaded from it", %{tmp_dir: dir} do
+    probe = template(18, 10)
+    gallery = [mate(probe, 10, 20), template(30, 30)]
+    plain = Dmd.score_many(probe, gallery)
+
+    Application.put_env(:faulds, :exla_cache, dir)
+    on_exit(fn -> Application.delete_env(:faulds, :exla_cache) end)
+    # Forget the compiled kernels, as a new VM would.
+    forget = fn ->
+      for {{Dmd, _, _, _} = key, _} <- :persistent_term.get(), do: :persistent_term.erase(key)
+    end
+
+    forget.()
+    assert Dmd.score_many(probe, gallery) == plain
+    assert [file] = File.ls!(dir)
+
+    forget.()
+    assert Dmd.score_many(probe, gallery) == plain
+    assert File.ls!(dir) == [file]
+  end
+
   test "no minutiae on either side scores 0" do
     empty = %{minutiae: nil, feature: nil, mask: nil}
 

@@ -15,4 +15,9 @@ config :exla, :clients,
 # CUDA 13); `Ortex.load(path, [:cuda, :cpu])` falls back to the CPU.
 config :ortex, Ortex.Native, features: ["cuda"]
 
+# LSA-R's compiled scoring kernels, kept across runs (`Matchers.Dmd`);
+# the tests compile their own.
+if config_env() != :test,
+  do: config(:faulds, :exla_cache, Path.expand("../_build/exla_cache", __DIR__))
+
 if File.exists?(Path.join(__DIR__, "local.exs")), do: import_config("local.exs")
