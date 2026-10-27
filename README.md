@@ -73,7 +73,7 @@ mix faulds.latent_benchmark data/benchmark --methods ldmd,fdmd,mcc_leader,nbis,f
 
 # Fusion and search-level calibration: fit on training runs, report on
 # held-out validation runs
-mix faulds.latent_fusion --train data/train
+mix faulds.latent_fusion --train data/train --val-runs run-09,run-10
 
 # How well each extractor finds the true minutiae
 mix faulds.latent_minutiae data/train/run-01 --extractors nbis,fdd,leader

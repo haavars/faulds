@@ -3,13 +3,13 @@
 # training runs (the training data under FAULDS_TRAIN, default
 # data/train). CPU only (EXLA host client). Run from the repo root:
 #
-#   mix run --no-start scripts/research/search_calibration_baselines.exs [OUT_DIR]
+#   mix run --no-start scripts/research/search_calibration_baselines.exs \
+#     --fit RUN,RUN,... --val RUN,RUN,... [--out OUT_DIR]
 #
-# Fit on train-casework-01/02 and train-value-01/02; report on
-# train-casework-03 and train-value-03 pooled under one threshold, each
-# latent against its own run's 1,000 rolled prints, every mated search
-# also searched mate-removed (scored without the mate), ties against the
-# mate. Nothing touches the benchmark directory.
+# Fit on the --fit runs; report on the --val runs pooled under one
+# threshold, each latent against its own run's rolled prints, every mated
+# search also searched mate-removed (scored without the mate), ties
+# against the mate. Nothing touches the benchmark directory.
 
 alias Faulds.{
   LatentBenchmark,
@@ -22,13 +22,18 @@ alias Faulds.{
 {:ok, _} = Application.ensure_all_started(:exla)
 Nx.global_default_backend({EXLA.Backend, client: :host})
 
-out_dir = System.argv() |> List.first() || "."
+{args, _} = OptionParser.parse!(System.argv(), strict: [fit: :string, val: :string, out: :string])
+
+(args[:fit] && args[:val]) ||
+  raise "give the runs: --fit RUN,RUN,... --val RUN,RUN,... [--out DIR]"
+
+out_dir = args[:out] || "."
 File.mkdir_p!(out_dir)
 
 root = System.get_env("FAULDS_TRAIN", "data/train")
 matchers = ~w(ldmd fdmd mcc_leader nbis flare)
-train_runs = ~w(train-casework-01 train-casework-02 train-value-01 train-value-02)
-val_runs = ~w(train-casework-03 train-value-03)
+train_runs = String.split(args[:fit], ",")
+val_runs = String.split(args[:val], ",")
 boot_n = String.to_integer(System.get_env("BOOT") || "2000")
 gallery_sizes = [100, 250, 500, 1000]
 draws = 5

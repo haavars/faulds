@@ -5,16 +5,15 @@ defmodule Mix.Tasks.Faulds.LatentFusion do
   Fits `Faulds.LearnedFusion` on synthetic training runs and
   reports it beside each matcher alone and their z-score sum.
 
-      $ mix faulds.latent_fusion --train data/train
+      $ mix faulds.latent_fusion --train data/train --val-runs run-09,run-10
       $ mix faulds.latent_fusion --test data/benchmark --probes REGEX
 
   `--train DIR`: every run directory under DIR (one run of synthetic
-  people each, never one of the benchmark's) is a search set of its own: its latents against its own
-  people's rolled prints; `--runs a,b,…` keeps only those. The runs in
-  `--val-runs` (default the last value and the last casework run kept,
-  by name) are held out, and the model
-  fitted on the rest is reported on them and written to `--out`
-  (default `priv/calibration/latent_fusion.json`).
+  people each, never one of the benchmark's) is a search set of its own:
+  its latents against its own people's rolled prints; `--runs a,b,…`
+  keeps only those. The runs in `--val-runs a,b,…` (required) are held
+  out, and the model fitted on the rest is reported on them and written
+  to `--out` (default `priv/calibration/latent_fusion.json`).
   `--matchers` (default `ldmd,fdmd,mcc_leader,nbis,flare`) are
   `LatentBenchmark` methods; `--l2` the penalty (default 1.0).
 
@@ -113,7 +112,7 @@ defmodule Mix.Tasks.Faulds.LatentFusion do
 
     val_runs =
       case opts[:val_runs] do
-        nil -> default_val_runs(runs)
+        nil -> Mix.raise("Give the held-out runs: --val-runs a,b,…")
         list -> String.split(list, ",")
       end
 
@@ -369,13 +368,6 @@ defmodule Mix.Tasks.Faulds.LatentFusion do
           "#{pct(r10.rate)} | #{pct(at1.fnir)} | #{pct(at10.fnir)} | #{test} |"
       )
     end
-  end
-
-  defp default_val_runs(runs) do
-    for prefix <- ["train-value-", "train-casework-"],
-        last = runs |> Enum.filter(&String.starts_with?(&1, prefix)) |> List.last(),
-        last != nil,
-        do: last
   end
 
   defp mates(dataset) do
