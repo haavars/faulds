@@ -82,7 +82,15 @@ mix faulds.latent_minutiae data/train/run-01 --extractors nbis,fdd,leader
 ```
 
 `mix help <task>` describes each task's options. Templates and score
-matrices are cached under each dataset's `.cache/`. No fitted fusion or
+matrices are cached under each dataset's `.cache/`.
+
+LSA-R's loops run faster (about a fifth) when XLA keeps them on the
+GPU as CUDA-graph nodes; XLA reads the flag when the process starts:
+
+```
+export XLA_FLAGS="--xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL"
+```
+ No fitted fusion or
 calibration models are distributed: fit them on your own training runs.
 
 ## Licence
