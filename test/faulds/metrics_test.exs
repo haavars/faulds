@@ -114,7 +114,7 @@ defmodule Faulds.MetricsTest do
     end
 
     test "stays inside [0, 1] at the extremes" do
-      assert {0.0, high} = Metrics.wilson_interval(0, 20)
+      assert {+0.0, high} = Metrics.wilson_interval(0, 20)
       assert high > 0.0
       assert {low, 1.0} = Metrics.wilson_interval(20, 20)
       assert low < 1.0
