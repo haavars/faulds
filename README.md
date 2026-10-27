@@ -30,9 +30,11 @@ Runtime (through a vendored Ortex) for the networks, on one GPU.
 
 ## Status
 
-Work in progress. So far everything has been measured on synthetic
-latents, which are not real casework: no result here is a claim about
-real latents until it has been measured on them (NIST SD302 and SD303).
+Work in progress. Everything so far has been measured on synthetic
+latents only. They are not real casework, so the results say how the
+methods compare on synthetic data, not how they perform on real
+latents. The evaluation code also follows published protocols for real
+latent datasets, such as NIST SD302's, for anyone who has access to them.
 
 ## Requirements
 
