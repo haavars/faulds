@@ -32,3 +32,6 @@ __pycache__/
 # Vendored Ortex: the native build and the ONNX Runtime libraries it copies
 /vendor/ortex/native/ortex/target/
 /vendor/ortex/priv/
+
+# NBIS, built from source by `mix faulds.setup_nbis`.
+/priv/nbis/
