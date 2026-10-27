@@ -35,3 +35,6 @@ __pycache__/
 
 # NBIS, built from source by `mix faulds.setup_nbis`.
 /priv/nbis/
+
+# SD302 protocol files, fetched by `mix faulds.fetch_protocols`.
+/priv/protocols/
