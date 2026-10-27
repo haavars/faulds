@@ -114,23 +114,20 @@ defmodule Faulds.Minutiae.RidgeCount do
   end
 
   # Falls from above to below, sample by sample, from the last side the
-  # profile was clearly on; counted when inside the margins.
+  # profile was clearly on; counted when inside the margins. That side is
+  # a forward fill, the side of the last decided sample, so it is taken
+  # by a cumulative max of their indices, not a loop over the samples
+  # (which compiled for 16 s).
   defnp falls(centred, dead, d) do
     {b, n, steps} = Nx.shape(centred)
-    state = Nx.broadcast(Nx.s8(0), {b, n})
-    count = Nx.broadcast(Nx.s32(0), {b, n})
-
-    {_, _, _, _, count, _} =
-      while {centred, dead, d, state, count, t = 0}, t < steps do
-        c = Nx.squeeze(Nx.slice_along_axis(centred, t, 1, axis: 2), axes: [2])
-        e = Nx.squeeze(Nx.slice_along_axis(dead, t, 1, axis: 2), axes: [2])
-        now = Nx.select(c > e, Nx.s8(1), Nx.select(c < -e, Nx.s8(-1), state))
-        inside = t >= @margin and t <= d - @margin
-        fell = state == 1 and now == -1 and inside
-        {centred, dead, d, now, count + fell, t + 1}
-      end
-
-    count
+    side = Nx.select(centred > dead, 1, Nx.select(centred < -dead, -1, 0))
+    t = Nx.iota({1, 1, steps}, axis: 2)
+    last = Nx.cumulative_max(Nx.select(side != 0, t, -1), axis: 2)
+    now = Nx.select(last >= 0, Nx.take_along_axis(side, Nx.max(last, 0), axis: 2), 0)
+    before = Nx.concatenate([Nx.broadcast(0, {b, n, 1}), now[[.., .., 0..-2//1]]], axis: 2)
+    inside = t >= @margin and t <= Nx.new_axis(d, 2) - @margin
+    fell = before == 1 and now == -1 and inside
+    fell |> Nx.as_type(:s32) |> Nx.sum(axes: [2])
   end
 
   deftransformp(samples(opts), do: opts[:max_distance] + @half_window + 1)
