@@ -31,6 +31,7 @@ and terms apply.
 | `Faulds.Minutiae.FddMap`'s decoding | MSU-LatentAFIS (prip-lab/MSU-LatentAFIS) | MIT |
 | `Faulds.Matchers.Mcc` | Cappelli, Ferrara, Maltoni, "Minutia Cylinder-Code" (IEEE TPAMI 2010), from the paper | — |
 | `Faulds.SearchMetrics.tar_at_far/3`, `mate_ranks/3` (`:sort_order`) | DMD's `utils/get_eval_metric.py` | Apache-2.0 |
+| `Faulds.Elub` | `lir.algorithms.bayeserror.elub` in lir 1.8.0 (NetherlandsForensicInstitute/lir); Vergeer et al., Science & Justice 56 (2016) | Apache-2.0 |
 
 The Tsinghua models therefore stay academic and non-commercial.
 
