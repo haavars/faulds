@@ -28,7 +28,9 @@ defmodule Mix.Tasks.Faulds.LatentBenchmark do
   the mate in the top 0.5–5% of the gallery.
   `--scaling` adds rank 1 at smaller gallery sizes and its power-law
   projection to 10,000 and 100,000 prints
-  (`LatentBenchmark.scaling_fit/3`). Templates and score matrices are cached in `DIR/.cache/`
+  (`LatentBenchmark.scaling_fit/3`). `--concurrency extract=8,nbis=16`
+  sets how many tasks each stage group runs at once
+  (`LatentBenchmark.concurrency/1`). Templates and score matrices are cached in `DIR/.cache/`
   (delete it after changing an extractor).
 
   EXLA starts without preallocating GPU memory and capped at half of it,
@@ -54,7 +56,8 @@ defmodule Mix.Tasks.Faulds.LatentBenchmark do
           min_shared: :integer,
           probes: :string,
           scaling: :boolean,
-          shortlist: :boolean
+          shortlist: :boolean,
+          concurrency: :string
         ]
       )
 
@@ -76,6 +79,8 @@ defmodule Mix.Tasks.Faulds.LatentBenchmark do
     baseline = opts[:baseline] || hd(methods)
 
     Mix.Task.run("app.config")
+
+    if opts[:concurrency], do: put_concurrency(opts[:concurrency])
 
     Application.put_env(:exla, :clients,
       cuda: [platform: :cuda, preallocate: false, memory_fraction: 0.5],
@@ -299,6 +304,30 @@ defmodule Mix.Tasks.Faulds.LatentBenchmark do
 
     File.write!(path, JSON.encode!(rows))
     Mix.shell().info("\nPer-probe ranks written to #{path}")
+  end
+
+  # "extract=8,nbis=16" into the application env `LatentBenchmark.concurrency/1` reads.
+  defp put_concurrency(spec) do
+    groups = Map.new(LatentBenchmark.concurrency_groups(), &{Atom.to_string(&1), &1})
+
+    concurrency =
+      for pair <- String.split(spec, ","), pair != "" do
+        with [name, n] <- String.split(pair, "="),
+             {:ok, group} <- Map.fetch(groups, name),
+             {n, ""} when n > 0 <- Integer.parse(n) do
+          {group, n}
+        else
+          _ ->
+            Mix.raise(
+              "--concurrency takes GROUP=N pairs, GROUP one of " <>
+                Enum.join(Map.keys(groups), ", ")
+            )
+        end
+      end
+
+    config = Application.get_env(:faulds, LatentBenchmark, [])
+    Application.put_env(:faulds, LatentBenchmark, Keyword.put(config, :concurrency, concurrency))
+    Mix.shell().info("Concurrency: #{inspect(concurrency)}")
   end
 
   defp pct(rate), do: "#{Float.round(rate * 100, 1)}%"

@@ -513,7 +513,7 @@ defmodule Faulds.LatentBenchmark do
           |> templates("dmd_leader", :probe)
           |> Task.async_stream(&Dmd.score_many(&1 |> packed.() |> Dmd.unpack(), gallery),
             timeout: :infinity,
-            max_concurrency: 4
+            max_concurrency: concurrency(:dmd)
           )
           |> Enum.map(fn {:ok, row} -> row end)
           |> Nx.tensor(type: :f32)
@@ -730,7 +730,7 @@ defmodule Faulds.LatentBenchmark do
           end
         end,
         timeout: :infinity,
-        max_concurrency: 4
+        max_concurrency: concurrency(:extract)
       )
       |> Enum.flat_map(fn {:ok, rows} -> rows end)
 
@@ -760,7 +760,7 @@ defmodule Faulds.LatentBenchmark do
            )}
         end,
         timeout: :infinity,
-        max_concurrency: 4
+        max_concurrency: concurrency(:extract)
       )
       |> Enum.map(fn {:ok, row} -> row end)
 
@@ -987,6 +987,36 @@ defmodule Faulds.LatentBenchmark do
     |> Nx.tensor(type: :f32)
   end
 
+  # Measured on 24 cores, a 1,000 latents × 1,000 prints run: 1,224 s with
+  # every stage at 4, 810 s with these, every result identical.
+  @concurrency_defaults [extract: 12, decode: 16, nbis: 16, mcc: 8, dmd: 4]
+  @concurrency_groups Keyword.keys(@concurrency_defaults)
+
+  @doc """
+  How many tasks a stage group runs at once: `:extract` (decoding and
+  every extractor, on the CPU and the GPU), `:decode` (image heights and
+  FlareNx poses), `:nbis` (`bozorth3` processes), `:mcc` and `:dmd`
+  (scoring on EXLA). The defaults were measured on a 24-core machine and
+  are capped at the number of schedulers. `config :faulds,
+  Faulds.LatentBenchmark, concurrency: [group: n]` overrides them,
+  uncapped (`mix faulds.latent_benchmark --concurrency extract=4` beside
+  another job). The setting doesn't change the results: `ldmd`, NBIS and
+  the templates are equal bit for bit at any setting; `fdmd` and `flare`
+  vary from run to run at any setting, the defaults included.
+  """
+  @spec concurrency(atom()) :: pos_integer()
+  def concurrency(group) when group in @concurrency_groups do
+    :faulds
+    |> Application.get_env(__MODULE__, [])
+    |> Keyword.get(:concurrency, [])
+    |> Keyword.get_lazy(group, fn ->
+      min(Keyword.fetch!(@concurrency_defaults, group), System.schedulers_online())
+    end)
+  end
+
+  @doc "The groups `concurrency/1` takes."
+  def concurrency_groups, do: @concurrency_groups
+
   @doc "Each rolled print's FlareNx pose and image height, by gallery key. Cached."
   @spec gallery_poses(dataset()) :: %{String.t() => %{pose: tuple(), height: pos_integer()}}
   def gallery_poses(dataset) do
@@ -1000,7 +1030,7 @@ defmodule Faulds.LatentBenchmark do
           end
         end,
         timeout: :infinity,
-        max_concurrency: 4
+        max_concurrency: concurrency(:decode)
       )
       |> Enum.flat_map(fn {:ok, pairs} -> pairs end)
       |> Map.new()
@@ -1209,7 +1239,7 @@ defmodule Faulds.LatentBenchmark do
           {probe.key, elem(Nx.shape(t), 0)}
         end,
         timeout: :infinity,
-        max_concurrency: 4
+        max_concurrency: concurrency(:decode)
       )
       |> Map.new(fn {:ok, pair} -> pair end)
     end)
@@ -1466,7 +1496,7 @@ defmodule Faulds.LatentBenchmark do
               do: {"#{subject}/#{fgp}", elem(Nx.shape(tensor), 0)}
         end,
         timeout: :infinity,
-        max_concurrency: 4
+        max_concurrency: concurrency(:decode)
       )
       |> Enum.flat_map(fn {:ok, pairs} -> pairs end)
       |> Map.new()
@@ -1524,7 +1554,7 @@ defmodule Faulds.LatentBenchmark do
     cylinders =
       &Task.async_stream(&1, fn ms -> Mcc.cylinders(ms) end,
         timeout: :infinity,
-        max_concurrency: 4
+        max_concurrency: concurrency(:mcc)
       )
 
     gallery =
@@ -1536,7 +1566,10 @@ defmodule Faulds.LatentBenchmark do
     probe_minutiae
     |> cylinders.()
     |> Enum.map(fn {:ok, t} -> t end)
-    |> Task.async_stream(&Mcc.score_many(&1, gallery), timeout: :infinity, max_concurrency: 4)
+    |> Task.async_stream(&Mcc.score_many(&1, gallery),
+      timeout: :infinity,
+      max_concurrency: concurrency(:mcc)
+    )
     |> Enum.map(fn {:ok, row} -> row end)
     |> Nx.tensor(type: :f32)
   end
@@ -1551,7 +1584,7 @@ defmodule Faulds.LatentBenchmark do
     probe_templates
     |> Task.async_stream(&Dmd.score_many(dmd_tensors(&1), gallery, opts),
       timeout: :infinity,
-      max_concurrency: Keyword.get(opts, :concurrency, 4)
+      max_concurrency: Keyword.get_lazy(opts, :concurrency, fn -> concurrency(:dmd) end)
     )
     |> Enum.map(fn {:ok, row} -> row end)
     |> Nx.tensor(type: :f32)
@@ -1617,7 +1650,7 @@ defmodule Faulds.LatentBenchmark do
     probe_xyts
     |> Task.async_stream(&Nbis.score_many(&1, gallery_xyts),
       timeout: :infinity,
-      max_concurrency: 4
+      max_concurrency: concurrency(:nbis)
     )
     |> Enum.map(fn {:ok, row} -> row end)
     |> Nx.tensor(type: :f32)
