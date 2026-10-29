@@ -93,17 +93,32 @@ pub fn to_binary<'a>(
 }
 
 /// Takes a vec of Atoms and transforms them into a vec of ExecutionProvider Enums
-pub fn map_eps(env: rustler::env::Env, eps: Vec<Atom>) -> Vec<ExecutionProviderDispatch> {
+/// With `deterministic`, the CUDA provider takes cuDNN's default convolution
+/// algorithm instead of benchmarking them in each process, so a model gives
+/// the same results from run to run (with the session's deterministic compute).
+pub fn map_eps(
+    env: rustler::env::Env,
+    eps: Vec<Atom>,
+    deterministic: bool,
+) -> Vec<ExecutionProviderDispatch> {
     eps.iter()
         .map(|e| match &e.to_term(env).atom_to_string().unwrap()[..] {
             CPU => ep::CPU::default().build(),
             // Full float32 (no TF32), so results match the CPU's, and the
             // memory pool grown by what's asked, not in powers of two.
             #[cfg(feature = "cuda")]
-            CUDA => ep::CUDA::default()
-                .with_tf32(false)
-                .with_arena_extend_strategy(ep::ArenaExtendStrategy::SameAsRequested)
-                .build(),
+            CUDA => {
+                let cuda = ep::CUDA::default()
+                    .with_tf32(false)
+                    .with_arena_extend_strategy(ep::ArenaExtendStrategy::SameAsRequested);
+
+                if deterministic {
+                    cuda.with_conv_algorithm_search(ep::cuda::ConvAlgorithmSearch::Default)
+                        .build()
+                } else {
+                    cuda.build()
+                }
+            }
             #[cfg(feature = "tensorrt")]
             TENSORRT => ep::TensorRT::default().build(),
             #[cfg(feature = "coreml")]

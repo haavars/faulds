@@ -13,6 +13,11 @@ Changed here:
   execution providers not compiled in fall back to the CPU; `ndarray` 0.17.
   The CUDA provider runs without TF32 (results match the CPU's) and grows
   its memory pool by what's requested, not in powers of two.
+- `Ortex.load/4` takes `deterministic: true`: the session's deterministic
+  compute, and the CUDA provider on cuDNN's default convolution algorithm
+  instead of benchmarking them per process, so a model gives the same
+  results from run to run (FlareNx; LEADER and DMD++ were already
+  deterministic and load without it).
 - `Ortex.Util.copy_ort_libs/0` also looks in the crate's `target/`, where
   Rustler builds a path dependency.
 - `mix.exs`: accepts Nx 1.0; the dev-only dependencies are dropped.

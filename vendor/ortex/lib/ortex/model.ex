@@ -22,8 +22,8 @@ defmodule Ortex.Model do
   defstruct [:reference]
 
   @doc false
-  def load(path, eps \\ [:cpu], opt \\ 3) do
-    case Ortex.Native.init(path, eps, opt) do
+  def load(path, eps \\ [:cpu], opt \\ 3, opts \\ []) do
+    case Ortex.Native.init(path, eps, opt, Keyword.get(opts, :deterministic, false)) do
       {:error, msg} ->
         raise msg
 

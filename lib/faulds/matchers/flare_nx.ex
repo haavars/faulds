@@ -48,6 +48,10 @@ defmodule Faulds.Matchers.FlareNx do
 
   use GenServer
 
+  # FlareNx's networks vary from run to run on the GPU without it (features
+  # by up to 3e-4, FDD's minutiae on every image); LEADER and DMD++ don't.
+  @onnx_options [deterministic: true]
+
   alias Faulds.Flare.{FastCartoonTexture, Warp}
   alias Faulds.Matchers.Flare
   alias Faulds.Minutiae.FddMap
@@ -347,8 +351,8 @@ defmodule Faulds.Matchers.FlareNx do
 
     {:ok,
      %{
-       pose_model: Onnx.load(pose_path),
-       fdd_model: Onnx.load(fdd_path),
+       pose_model: Onnx.load(pose_path, @onnx_options),
+       fdd_model: Onnx.load(fdd_path, @onnx_options),
        regression_pose_model: load_optional("regression_pose.onnx"),
        unetenh_model: load_optional("unetenh.onnx"),
        fdd_minutiae_model: load_optional("fdd_minutiae.onnx")
@@ -357,7 +361,7 @@ defmodule Faulds.Matchers.FlareNx do
 
   defp load_optional(filename) do
     path = onnx_path(filename)
-    if File.exists?(path), do: Onnx.load(path)
+    if File.exists?(path), do: Onnx.load(path, @onnx_options)
   end
 
   @impl GenServer

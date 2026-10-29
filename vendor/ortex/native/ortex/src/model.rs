@@ -52,12 +52,14 @@ pub fn init(
     model_path: String,
     eps: Vec<ExecutionProviderDispatch>,
     opt: i32,
+    deterministic: bool,
 ) -> Result<OrtexModel, Error> {
     // TODO: send tracing logs to erlang/elixir _somehow_
     // tracing_subscriber::fmt::init();
 
     let session = Session::builder(environment()?)?
         .with_optimization_level(map_opt_level(opt))?
+        .with_deterministic_compute(deterministic)?
         .with_execution_providers(eps)?
         .commit_from_file(model_path)?;
 
