@@ -262,13 +262,17 @@ defmodule Faulds.Matchers.Dmd do
   @spec pack(template()) :: binary()
   def pack(%{minutiae: nil}), do: <<"DMD1", 0::32-little>>
 
+  # Padded to bucket(n) rows, so EXLA compiles a few shapes rather than one
+  # per minutiae count (about 130 ms each, most of a print's packing
+  # time), then cut back to n. The bytes are the same.
   def pack(%{minutiae: minutiae, feature: feature, mask: mask}) do
     n = Nx.axis_size(minutiae, 0)
-    signs = exla(&pack_signs_n/1, [feature])
-    mask8 = mask |> Nx.clip(0.0, 1.0) |> Nx.multiply(255) |> Nx.round() |> Nx.as_type(:u8)
+    rows = bucket(n)
+    {signs, mask8} = exla(&pack_n/2, [pad_rows(feature, rows), pad_rows(mask, rows)])
 
     <<"DMD1", n::32-little>> <>
-      Nx.to_binary(Nx.as_type(minutiae, :f32)) <> Nx.to_binary(signs) <> Nx.to_binary(mask8)
+      Nx.to_binary(Nx.as_type(minutiae, :f32)) <>
+      binary_part(Nx.to_binary(signs), 0, n * 96) <> binary_part(Nx.to_binary(mask8), 0, n * 64)
   end
 
   @doc "The template `pack/1` stored: features as ±1, masks as stored."
@@ -338,6 +342,11 @@ defmodule Faulds.Matchers.Dmd do
       weight: flags(k, n, :f32),
       ridges: unknown_ridges(n)
     }
+  end
+
+  defn pack_n(feature, mask) do
+    mask8 = mask |> Nx.clip(0.0, 1.0) |> Nx.multiply(255) |> Nx.round() |> Nx.as_type(:u8)
+    {pack_signs_n(feature), mask8}
   end
 
   defn pack_signs_n(feature) do
